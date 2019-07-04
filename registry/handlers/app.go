@@ -92,13 +92,17 @@ type App struct {
 // requests. The app only implements ServeHTTP and can be wrapped in other
 // handlers accordingly.
 func NewApp(ctx context.Context, config *configuration.Configuration) *App {
+	//使用gorilla/mux
 	app := &App{
 		Config:  config,
 		Context: ctx,
+		//mux router,从route desc中读取
 		router:  v2.RouterWithPrefix(config.HTTP.Prefix),
 		isCache: config.Proxy.RemoteURL != "",
 	}
 
+	//这里将HandlerFunc继承Handler，注意这里的HandlerFunc是一个方法,实现比较复杂
+	//HandlerFunc是一个func，但是他也实现了Handler接口，所以他有ServeHTTP方法，于是HandlerFunc的参数是方法
 	// Register the handler dispatchers.
 	app.register(v2.RouteNameBase, func(ctx *Context, r *http.Request) http.Handler {
 		return http.HandlerFunc(apiBase)
@@ -424,8 +428,11 @@ func (app *App) RegisterHealthChecks(healthRegistries ...*health.Registry) {
 // passed through the application filters and context will be constructed at
 // request time.
 func (app *App) register(routeName string, dispatch dispatchFunc) {
+
+	//生成handler
 	handler := app.dispatcher(dispatch)
 
+	//prometheus开启的情况下
 	// Chain the handler with prometheus instrumented handler
 	if app.Config.HTTP.Debug.Prometheus.Enabled {
 		namespace := metrics.NewNamespace(prometheus.NamespacePrefix, "http", nil)
@@ -440,6 +447,7 @@ func (app *App) register(routeName string, dispatch dispatchFunc) {
 	// replace it with manual routing and structure-based dispatch for better
 	// control over the request execution.
 
+	//gorilla/mux向route添加handle
 	app.router.GetRoute(routeName).Handler(handler)
 }
 
@@ -652,15 +660,20 @@ type dispatchFunc func(ctx *Context, r *http.Request) http.Handler
 // dispatcher returns a handler that constructs a request specific context and
 // handler, using the dispatch factory function.
 func (app *App) dispatcher(dispatch dispatchFunc) http.Handler {
+
+	//匿名函数会在必要的时候通过ServeHTTP执行，这里比较绕
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		//获取配置文件中header键值对
 		for headerName, headerValues := range app.Config.HTTP.Headers {
 			for _, value := range headerValues {
 				w.Header().Add(headerName, value)
 			}
 		}
 
+		//返回一个包装的context
 		context := app.context(w, r)
 
+		//?看起来是鉴权
 		if err := app.authorized(w, r, context); err != nil {
 			dcontext.GetLogger(context).Warnf("error authorizing context: %v", err)
 			return
@@ -670,8 +683,10 @@ func (app *App) dispatcher(dispatch dispatchFunc) http.Handler {
 		context.Context = dcontext.WithLogger(context.Context, dcontext.GetLogger(context.Context, auth.UserNameKey))
 
 		// sync up context on the request.
+		//完全复制一个request，并且用传参的context
 		r = r.WithContext(context)
 
+		//routename不是base或者catalog
 		if app.nameRequired(r) {
 			nameRef, err := reference.WithName(getName(context))
 			if err != nil {

@@ -45,6 +45,7 @@ var ServeCmd = &cobra.Command{
 		// setup context
 		ctx := dcontext.WithVersion(dcontext.Background(), version.Version)
 
+		//解析配置文件为config
 		config, err := resolveConfiguration(args)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "configuration error: %v\n", err)
@@ -61,11 +62,13 @@ var ServeCmd = &cobra.Command{
 			}(config.HTTP.Debug.Addr)
 		}
 
+		//生成registry
 		registry, err := NewRegistry(ctx, config)
 		if err != nil {
 			log.Fatalln(err)
 		}
 
+		//如果debug的prometheus开启
 		if config.HTTP.Debug.Prometheus.Enabled {
 			path := config.HTTP.Debug.Prometheus.Path
 			if path == "" {
@@ -75,6 +78,7 @@ var ServeCmd = &cobra.Command{
 			http.Handle(path, metrics.Handler())
 		}
 
+		//registry启动http服务
 		if err = registry.ListenAndServe(); err != nil {
 			log.Fatalln(err)
 		}
@@ -82,6 +86,7 @@ var ServeCmd = &cobra.Command{
 }
 
 // A Registry represents a complete instance of the registry.
+//三部分分别是config,app,server
 // TODO(aaronl): It might make sense for Registry to become an interface.
 type Registry struct {
 	config *configuration.Configuration
@@ -90,19 +95,23 @@ type Registry struct {
 }
 
 // NewRegistry creates a new registry from a context and configuration struct.
+//创建一个registry
 func NewRegistry(ctx context.Context, config *configuration.Configuration) (*Registry, error) {
 	var err error
+	//日志相关，已经生成子ctx
 	ctx, err = configureLogging(ctx, config)
 	if err != nil {
 		return nil, fmt.Errorf("error configuring logger: %v", err)
 	}
 
+	//bugsnag配置
 	configureBugsnag(config)
 
 	// inject a logger into the uuid library. warns us if there is a problem
 	// with uuid generation under low entropy.
 	uuid.Loggerf = dcontext.GetLogger(ctx).Warnf
 
+	//创建一个app
 	app := handlers.NewApp(ctx, config)
 	// TODO(aaronl): The global scope of the health checks means NewRegistry
 	// can only be called once per process.
@@ -115,6 +124,7 @@ func NewRegistry(ctx context.Context, config *configuration.Configuration) (*Reg
 		handler = gorhandlers.CombinedLoggingHandler(os.Stdout, handler)
 	}
 
+	//server对象
 	server := &http.Server{
 		Handler: handler,
 	}
@@ -130,11 +140,13 @@ func NewRegistry(ctx context.Context, config *configuration.Configuration) (*Reg
 func (registry *Registry) ListenAndServe() error {
 	config := registry.config
 
+	//net有unix socket和tcp socket两种模式
 	ln, err := listener.NewListener(config.HTTP.Net, config.HTTP.Addr)
 	if err != nil {
 		return err
 	}
 
+	//https的情况
 	if config.HTTP.TLS.Certificate != "" || config.HTTP.TLS.LetsEncrypt.CacheFile != "" {
 		var tlsMinVersion uint16
 		if config.HTTP.TLS.MinimumTLS == "" {
@@ -223,6 +235,7 @@ func (registry *Registry) ListenAndServe() error {
 	signal.Notify(quit, syscall.SIGTERM)
 	serveErr := make(chan error)
 
+	//以goroutine的形式启动一个server
 	// Start serving in goroutine and listen for stop signal in main thread
 	go func() {
 		serveErr <- registry.server.Serve(ln)

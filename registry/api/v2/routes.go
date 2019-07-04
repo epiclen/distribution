@@ -32,6 +32,7 @@ func RouterWithPrefix(prefix string) *mux.Router {
 
 	router.StrictSlash(true)
 
+	//从routedesc中读取path的信息,设置route的path信息
 	for _, descriptor := range routeDescriptors {
 		router.Path(descriptor.Path).Name(descriptor.Name)
 	}
